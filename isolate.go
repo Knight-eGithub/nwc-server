@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"bufio"
@@ -22,6 +22,7 @@ func NewIsolateRunner() *IsolateRunner {
 }
 
 func (r *IsolateRunner) InitBox(boxID int) (string, error) {
+	_ = r.CleanupBox(boxID) // ensure any stale box or processes are purged before initializing
 	cmd := exec.Command("isolate", fmt.Sprintf("--box-id=%d", boxID), "--init")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

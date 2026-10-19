@@ -20,7 +20,8 @@ func NewWorkerPool(maxConcurrent int) *WorkerPool {
 	pool := &WorkerPool{
 		availableSlots: make(chan int, maxConcurrent),
 	}
-	for i := 0; i < maxConcurrent; i++ {
+	// Start from slot 1 (avoiding slot 0 which can have stale lock/mount collisions)
+	for i := 1; i <= maxConcurrent; i++ {
 		pool.availableSlots <- i
 	}
 	return pool

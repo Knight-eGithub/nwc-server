@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -76,7 +76,7 @@ func RunCpp(ctx context.Context, isolate *IsolateRunner, boxID int, req ExecuteR
 		WallLimitSec: (float64(timeLimitMs) / 1000.0) * 2.0,
 		MemoryKB:     int64(memLimitMB) * 1024,
 		FileSizeKB:   1024, // 1 MB hard disk quota to prevent infinite output flooding
-		MaxProcesses: 1,    // Only 1 process allowed (kills fork bombs immediately)
+		MaxProcesses: 10,   // Headroom for glibc threads & fast sequential executions, blocks fork bombs
 		StdinFile:    "stdin.txt",
 		StdoutFile:   "stdout.txt",
 		StderrFile:   "stderr.txt",

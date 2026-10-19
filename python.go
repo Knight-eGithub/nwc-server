@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -58,7 +58,7 @@ func RunPython(ctx context.Context, isolate *IsolateRunner, slot int, req Execut
 		WallLimitSec: timeLimitSec + 2.0,
 		MemoryKB:     65536, // 64 MB
 		FileSizeKB:   1024,  // 1 MB disk quota
-		MaxProcesses: 1,     // Blocks fork bombs
+		MaxProcesses: 10,    // Headroom for Python runtime threads & fast sequential executions
 		StdinFile:    "stdin.txt",
 		StdoutFile:   "stdout.txt",
 		StderrFile:   "stderr.txt",

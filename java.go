@@ -110,7 +110,7 @@ func RunJava(ctx context.Context, isolate *IsolateRunner, boxID int, req Execute
 		WallLimitSec: (float64(timeLimitMs) / 1000.0) * 2.0,
 		MemoryKB:     0,    // 0 lets JVM manage its virtual address space without triggering SIGSEGV 11
 		FileSizeKB:   1024, // 1 MB disk quota
-		MaxProcesses: 64,   // Headroom for JVM runtime threads (GC, JIT), prevents pthread_create EAGAIN while blocking thread bombs
+		MaxProcesses: 30,   // Capped to 30 threads for JVM GC/JIT, blocks thread bombs
 		ExtraDirs:    extraDirs,
 		StdinFile:    "stdin.txt",
 		StdoutFile:   "stdout.txt",

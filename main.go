@@ -23,8 +23,13 @@ func main() {
 	}
 
 	server := &Server{
-		pool:    NewWorkerPool(2), // Max 2 concurrent executions (Slot 0 & 1)
+		pool:    NewWorkerPool(2), // Max 2 concurrent executions
 		isolate: NewIsolateRunner(),
+	}
+
+	// Purge any stale boxes or dangling mounts from previous runs on boot
+	for i := 0; i <= 2; i++ {
+		_ = server.isolate.CleanupBox(i)
 	}
 
 	mux := http.NewServeMux()

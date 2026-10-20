@@ -36,6 +36,16 @@ func (r *IsolateRunner) InitBox(boxID int) (string, error) {
 }
 
 func (r *IsolateRunner) CleanupBox(boxID int) error {
+	// 1. Kill any stuck isolate supervisor processes for this box
+	_ = exec.Command("pkill", "-9", "-f", fmt.Sprintf("isolate --box-id=%d", boxID)).Run()
+
+	// 2. Kill all lingering processes owned by this box's sandbox UID (Codespaces uses 100000+boxID, standard uses 60000+boxID)
+	for _, baseUID := range []int{100000, 60000} {
+		uid := baseUID + boxID
+		_ = exec.Command("pkill", "-9", "-u", strconv.Itoa(uid)).Run()
+	}
+
+	// 3. Clean up the box directory and unmount filesystems
 	cmd := exec.Command("isolate", fmt.Sprintf("--box-id=%d", boxID), "--cleanup")
 	return cmd.Run()
 }

@@ -28,8 +28,8 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", server.handleHealth)
-	mux.HandleFunc("/execute", server.handleExecute)
+	mux.HandleFunc("/health", withCORS(server.handleHealth))
+	mux.HandleFunc("/execute", withCORS(server.handleExecute))
 
 	httpServer := &http.Server{
 		Addr:         ":" + port,
@@ -50,6 +50,20 @@ func main() {
 	log.Printf("[nwc-server] High-performance execution engine listening on :%s (Concurrency Cap: 2 slots)\n", port)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("[nwc-server] Server failed: %v\n", err)
+	}
+}
+
+// withCORS middleware enables direct client-side fallback requests without browser CORS errors
+func withCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-client-id, x-run-id")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next(w, r)
 	}
 }
 

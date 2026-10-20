@@ -2,11 +2,12 @@ package main
 
 // ExecuteRequest is the payload sent from Next.js
 type ExecuteRequest struct {
-	Language       string `json:"language"`        // "cpp" or "java"
+	Language       string `json:"language"`        // "cpp", "java", "python", "javascript"
 	Code           string `json:"code"`            // Source code
 	Stdin          string `json:"stdin"`           // Standard input data
 	TimeLimitMs    int    `json:"time_limit_ms"`   // e.g. 2000 (defaults to 2000ms if 0)
 	MemoryLimitMB  int    `json:"memory_limit_mb"` // e.g. 64 (defaults to 64MB if 0)
+	CompileOnly    bool   `json:"compile_only"`    // If true, compile/validate without isolate execution
 }
 
 // ExecuteResponse is returned back to Next.js

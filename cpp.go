@@ -40,31 +40,67 @@ func RunCpp(ctx context.Context, isolate *IsolateRunner, boxID int, req ExecuteR
 	}
 
 	// 4. Compile Phase with Compiler DOS protections:
-	// - 5s timeout: kills infinite macro/template loops
+	// - 6s timeout: kills infinite macro/template loops
 	// - -ftemplate-depth=128: prevents template recursion bomb
 	// - -fmax-errors=3: stops compiler error spamming
 	// - -O0 -pipe: ultra-fast compilation without disk churn
-	compileCtx, compileCancel := context.WithTimeout(ctx, 5*time.Second)
+	// - Runs inside Isolate sandbox to protect the host
+	compileCtx, compileCancel := context.WithTimeout(ctx, 6*time.Second)
 	defer compileCancel()
 
-	compileCmd := exec.CommandContext(compileCtx, "g++",
-		"-O0",
-		"-std=c++17",
-		"-pipe",
-		"-fmax-errors=3",
-		"-ftemplate-depth=128",
-		"main.cpp",
-		"-o", "main",
-	)
-	compileCmd.Dir = boxDir
+	compileMetaFile := filepath.Join(boxDir, "compile_meta.txt")
+	compileOpts := RunOptions{
+		BoxID:        boxID,
+		Command:      "/usr/bin/g++",
+		Args:         []string{"-O0", "-std=c++17", "-pipe", "-fmax-errors=3", "-ftemplate-depth=128", "main.cpp", "-o", "main"},
+		TimeLimitSec: 6.0,
+		WallLimitSec: 10.0,
+		MemoryKB:     512 * 1024,
+		FileSizeKB:   20 * 1024,
+		MaxProcesses: 50,
+		ExtraDirs:    []string{"/usr/bin", "/usr/include", "/usr/lib", "/usr/lib/gcc"},
+		StderrFile:   "compile_err.txt",
+		MetaFile:     compileMetaFile,
+	}
 
-	compileOut, err := compileCmd.CombinedOutput()
-	if err != nil {
-		return &ExecuteResponse{
-			Status:        "compile_error",
-			CompileOutput: string(compileOut),
-			ExitCode:      1,
-		}, nil
+	compileStats, err := isolate.Run(compileCtx, compileOpts)
+	var compileErrOutput string
+	compileSucceeded := false
+
+	if err == nil && compileStats != nil {
+		if compileStats.ExitCode == 0 {
+			compileSucceeded = true
+		} else {
+			compileErrBytes, _ := os.ReadFile(filepath.Join(boxDir, "compile_err.txt"))
+			compileErrOutput = string(compileErrBytes)
+			return &ExecuteResponse{
+				Status:        "compile_error",
+				CompileOutput: compileErrOutput,
+				ExitCode:      1,
+			}, nil
+		}
+	}
+
+	// Fallback to host compilation only if Isolate was not found / disabled on dev machine
+	if !compileSucceeded {
+		compileCmd := exec.CommandContext(compileCtx, "g++",
+			"-O0",
+			"-std=c++17",
+			"-pipe",
+			"-fmax-errors=3",
+			"-ftemplate-depth=128",
+			"main.cpp",
+			"-o", "main",
+		)
+		compileCmd.Dir = boxDir
+		compileOut, err := compileCmd.CombinedOutput()
+		if err != nil {
+			return &ExecuteResponse{
+				Status:        "compile_error",
+				CompileOutput: string(compileOut),
+				ExitCode:      1,
+			}, nil
+		}
 	}
 
 	// 5. Execution Phase inside isolate sandbox

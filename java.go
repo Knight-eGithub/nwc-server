@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -67,68 +66,29 @@ func RunJava(ctx context.Context, isolate *IsolateRunner, boxID int, req Execute
 		return nil, fmt.Errorf("failed to write stdin: %v", err)
 	}
 
-	// 4. Compilation Phase with guards:
+	// 4. Compilation Phase on host with guards:
 	// - 8s timeout
-	// - Sandboxed inside Isolate sandbox with fallback to host compilation
+	// - -Xmaxerrs 3: stops compilation after 3 errors
 	compileCtx, compileCancel := context.WithTimeout(ctx, 8*time.Second)
 	defer compileCancel()
 
 	realJavaBin, realJavacBin, jdkHome := getJavaPaths()
 
-	compileMetaFile := filepath.Join(boxDir, "compile_meta.txt")
-	compileOpts := RunOptions{
-		BoxID:        boxID,
-		Command:      realJavacBin,
-		Args:         []string{"-J-Xmx128m", "-J-Xms16m", "-Xmaxerrs", "3", "Main.java"},
-		TimeLimitSec: 8.0,
-		WallLimitSec: 12.0,
-		MemoryKB:     0, // Allow JVM to map address space
-		FileSizeKB:   20 * 1024,
-		MaxProcesses: 50,
-		ExtraDirs:    []string{jdkHome, "/etc", "/usr/bin", "/usr/lib", "/lib", "/lib64"},
-		StderrFile:   "compile_err.txt",
-		MetaFile:     compileMetaFile,
-	}
+	compileCmd := exec.CommandContext(compileCtx, realJavacBin,
+		"-J-Xmx128m",
+		"-J-Xms16m",
+		"-Xmaxerrs", "3",
+		"Main.java",
+	)
+	compileCmd.Dir = boxDir
 
-	compileStats, err := isolate.Run(compileCtx, compileOpts)
-	compileSucceeded := false
-
-	if err == nil && compileStats != nil {
-		if compileStats.ExitCode == 0 {
-			compileSucceeded = true
-		} else {
-			compileErrBytes, _ := os.ReadFile(filepath.Join(boxDir, "compile_err.txt"))
-			errStr := string(compileErrBytes)
-			// If isolate itself failed to run javac (e.g. execve failure, missing symlink target, internal error)
-			// do NOT treat it as student compilation error; fall through to host compilation
-			if !strings.Contains(errStr, "execve") && compileStats.Status != "XX" {
-				return &ExecuteResponse{
-					Status:        "compile_error",
-					CompileOutput: errStr,
-					ExitCode:      1,
-				}, nil
-			}
-		}
-	}
-
-	// Fallback to host compilation if Isolate was not found / disabled / failed to launch compiler
-	if !compileSucceeded {
-		compileCmd := exec.CommandContext(compileCtx, realJavacBin,
-			"-J-Xmx128m",
-			"-J-Xms16m",
-			"-Xmaxerrs", "3",
-			"Main.java",
-		)
-		compileCmd.Dir = boxDir
-
-		compileOut, err := compileCmd.CombinedOutput()
-		if err != nil {
-			return &ExecuteResponse{
-				Status:        "compile_error",
-				CompileOutput: string(compileOut),
-				ExitCode:      1,
-			}, nil
-		}
+	compileOut, err := compileCmd.CombinedOutput()
+	if err != nil {
+		return &ExecuteResponse{
+			Status:        "compile_error",
+			CompileOutput: string(compileOut),
+			ExitCode:      1,
+		}, nil
 	}
 	_ = exec.Command("chmod", "-R", "777", boxDir).Run()
 

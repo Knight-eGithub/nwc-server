@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -40,74 +39,34 @@ func RunCpp(ctx context.Context, isolate *IsolateRunner, boxID int, req ExecuteR
 		return nil, fmt.Errorf("failed to write stdin: %v", err)
 	}
 
-	// 4. Compile Phase with Compiler DOS protections:
+	// 4. Compile Phase on host with Compiler DOS protections:
 	// - 6s timeout: kills infinite macro/template loops
 	// - -ftemplate-depth=128: prevents template recursion bomb
 	// - -fmax-errors=3: stops compiler error spamming
 	// - -O0 -pipe: ultra-fast compilation without disk churn
-	// - Runs inside Isolate sandbox to protect the host
 	compileCtx, compileCancel := context.WithTimeout(ctx, 6*time.Second)
 	defer compileCancel()
 
-	compileMetaFile := filepath.Join(boxDir, "compile_meta.txt")
-	compileOpts := RunOptions{
-		BoxID:        boxID,
-		Command:      "/usr/bin/g++",
-		Args:         []string{"-O0", "-std=c++17", "-pipe", "-fmax-errors=3", "-ftemplate-depth=128", "main.cpp", "-o", "main"},
-		TimeLimitSec: 6.0,
-		WallLimitSec: 10.0,
-		MemoryKB:     512 * 1024,
-		FileSizeKB:   20 * 1024,
-		MaxProcesses: 50,
-		ExtraDirs:    []string{"/usr/bin", "/usr/include", "/usr/lib", "/usr/lib/gcc", "/usr/libexec", "/usr/x86_64-linux-gnu", "/etc"},
-		StderrFile:   "compile_err.txt",
-		MetaFile:     compileMetaFile,
-	}
+	compileCmd := exec.CommandContext(compileCtx, "g++",
+		"-O0",
+		"-std=c++17",
+		"-pipe",
+		"-fmax-errors=3",
+		"-ftemplate-depth=128",
+		"main.cpp",
+		"-o", "main",
+	)
+	compileCmd.Dir = boxDir
 
-	compileStats, err := isolate.Run(compileCtx, compileOpts)
-	var compileErrOutput string
-	compileSucceeded := false
-
-	if err == nil && compileStats != nil {
-		if compileStats.ExitCode == 0 {
-			compileSucceeded = true
-		} else {
-			compileErrBytes, _ := os.ReadFile(filepath.Join(boxDir, "compile_err.txt"))
-			compileErrOutput = string(compileErrBytes)
-			// If isolate failed due to missing system tools (ld, execve, internal box error), fall through to host compilation
-			if !strings.Contains(compileErrOutput, "cannot find 'ld'") &&
-				!strings.Contains(compileErrOutput, "execve") &&
-				compileStats.Status != "XX" {
-				return &ExecuteResponse{
-					Status:        "compile_error",
-					CompileOutput: compileErrOutput,
-					ExitCode:      1,
-				}, nil
-			}
-		}
+	compileOut, err := compileCmd.CombinedOutput()
+	if err != nil {
+		return &ExecuteResponse{
+			Status:        "compile_error",
+			CompileOutput: string(compileOut),
+			ExitCode:      1,
+		}, nil
 	}
-
-	// Fallback to host compilation only if Isolate was not found / disabled on dev machine
-	if !compileSucceeded {
-		compileCmd := exec.CommandContext(compileCtx, "g++",
-			"-O0",
-			"-std=c++17",
-			"-pipe",
-			"-fmax-errors=3",
-			"-ftemplate-depth=128",
-			"main.cpp",
-			"-o", "main",
-		)
-		compileCmd.Dir = boxDir
-		compileOut, err := compileCmd.CombinedOutput()
-		if err != nil {
-			return &ExecuteResponse{
-				Status:        "compile_error",
-				CompileOutput: string(compileOut),
-				ExitCode:      1,
-			}, nil
-		}
-	}
+	_ = exec.Command("chmod", "755", filepath.Join(boxDir, "main")).Run()
 
 	// 5. Execution Phase inside isolate sandbox
 	metaFile := filepath.Join(boxDir, "meta.txt")
@@ -119,6 +78,7 @@ func RunCpp(ctx context.Context, isolate *IsolateRunner, boxID int, req ExecuteR
 		MemoryKB:     int64(memLimitMB) * 1024,
 		FileSizeKB:   1024, // 1 MB hard disk quota to prevent infinite output flooding
 		MaxProcesses: 10,   // Headroom for glibc threads & fast sequential executions, blocks fork bombs
+		ExtraDirs:    []string{"/lib", "/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu"},
 		StdinFile:    "stdin.txt",
 		StdoutFile:   "stdout.txt",
 		StderrFile:   "stderr.txt",

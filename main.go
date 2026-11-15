@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -17,19 +18,29 @@ type Server struct {
 	isolate *IsolateRunner
 }
 
+func getEnvInt(key string, defaultVal int) int {
+	if val := os.Getenv(key); val != "" {
+		if i, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && i > 0 {
+			return i
+		}
+	}
+	return defaultVal
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "5000"
 	}
 
+	slots := getEnvInt("CONCURRENCY_SLOTS", 2)
 	server := &Server{
-		pool:    NewWorkerPool(2), // Max 2 concurrent executions
+		pool:    NewWorkerPool(slots), // Configurable concurrency (defaults to 2 for 2 vCPU / 4 GB RAM)
 		isolate: NewIsolateRunner(),
 	}
 
 	// Purge any stale boxes or dangling mounts from previous runs on boot
-	for i := 0; i <= 2; i++ {
+	for i := 0; i <= slots; i++ {
 		_ = server.isolate.CleanupBox(i)
 	}
 
@@ -53,7 +64,7 @@ func main() {
 		_ = httpServer.Close()
 	}()
 
-	log.Printf("[nwc-server] High-performance execution engine listening on :%s (Concurrency Cap: 2 slots)\n", port)
+	log.Printf("[nwc-server] High-performance execution engine listening on :%s (Concurrency Cap: %d slots)\n", port, slots)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("[nwc-server] Server failed: %v\n", err)
 	}

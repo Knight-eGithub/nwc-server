@@ -50,7 +50,7 @@ func RunJavaScript(ctx context.Context, isolate *IsolateRunner, slot int, req Ex
 	opts := RunOptions{
 		BoxID:        slot,
 		Command:      nodeBin,
-		Args:         []string{"--max-old-space-size=48", "/box/index.js"},
+		Args:         []string{"--max-old-space-size=256", "/box/index.js"},
 		TimeLimitSec: timeLimitSec,
 		WallLimitSec: timeLimitSec + 2.0,
 		MemoryKB:     0,    // Let V8 allocate its virtual address space cleanly
@@ -65,6 +65,9 @@ func RunJavaScript(ctx context.Context, isolate *IsolateRunner, slot int, req Ex
 			"/usr/lib",
 			"/usr/local/lib",
 			"/etc",
+			"/lib",
+			"/lib64",
+			"/usr/lib/x86_64-linux-gnu",
 		},
 	}
 

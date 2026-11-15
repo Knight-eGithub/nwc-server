@@ -25,7 +25,7 @@ func RunCpp(ctx context.Context, isolate *IsolateRunner, boxID int, req ExecuteR
 	}
 	memLimitMB := req.MemoryLimitMB
 	if memLimitMB <= 0 {
-		memLimitMB = 64 // default 64 MB
+		memLimitMB = 256 // default 256 MB
 	}
 
 	// 3. Write source code and stdin into the sandbox directory
@@ -69,7 +69,7 @@ func RunCpp(ctx context.Context, isolate *IsolateRunner, boxID int, req ExecuteR
 	_ = exec.Command("chmod", "755", filepath.Join(boxDir, "main")).Run()
 
 	// 5. Execution Phase inside isolate sandbox
-	metaFile := filepath.Join(boxDir, "meta.txt")
+	metaFile := fmt.Sprintf("/tmp/isolate_meta_%d.txt", boxID)
 	opts := RunOptions{
 		BoxID:        boxID,
 		Command:      "./main",

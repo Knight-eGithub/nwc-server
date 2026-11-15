@@ -50,15 +50,20 @@ func RunPython(ctx context.Context, isolate *IsolateRunner, slot int, req Execut
 	pyDir := filepath.Dir(pythonBin)
 	metaFile := fmt.Sprintf("/tmp/isolate_meta_%d.txt", slot)
 
+	memLimitKB := int64(262144) // 256 MB default
+	if req.MemoryLimitMB > 0 {
+		memLimitKB = int64(req.MemoryLimitMB) * 1024
+	}
+
 	opts := RunOptions{
 		BoxID:        slot,
 		Command:      pythonBin,
 		Args:         []string{"-B", "-S", "/box/script.py"},
 		TimeLimitSec: timeLimitSec,
 		WallLimitSec: timeLimitSec + 2.0,
-		MemoryKB:     65536, // 64 MB
-		FileSizeKB:   1024,  // 1 MB disk quota
-		MaxProcesses: 10,    // Headroom for Python runtime threads & fast sequential executions
+		MemoryKB:     memLimitKB,
+		FileSizeKB:   1024, // 1 MB disk quota
+		MaxProcesses: 10,   // Headroom for Python runtime threads & fast sequential executions
 		StdinFile:    "stdin.txt",
 		StdoutFile:   "stdout.txt",
 		StderrFile:   "stderr.txt",
@@ -67,6 +72,9 @@ func RunPython(ctx context.Context, isolate *IsolateRunner, slot int, req Execut
 			pyDir,
 			"/usr/lib",
 			"/usr/local/lib",
+			"/lib",
+			"/lib64",
+			"/usr/lib/x86_64-linux-gnu",
 		},
 	}
 

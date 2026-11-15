@@ -115,9 +115,9 @@ func RunJava(ctx context.Context, isolate *IsolateRunner, boxID int, req Execute
 
 	// JVM runtime flags strictly tailored for low-memory CP execution
 	javaArgs := []string{
-		"-Xmx48m",
+		"-Xmx128m",
 		"-Xms16m",
-		"-XX:MaxMetaspaceSize=32m",
+		"-XX:MaxMetaspaceSize=64m",
 		"-Xshare:off",
 		"-XX:ActiveProcessorCount=2",
 		"-XX:CICompilerCount=2",

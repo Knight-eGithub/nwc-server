@@ -52,27 +52,60 @@ func RunJava(ctx context.Context, isolate *IsolateRunner, boxID int, req Execute
 	}
 
 	// 4. Compilation Phase with guards:
-	// - 6s timeout
-	// - -J-Xmx64m: Cap compiler memory
-	// - -Xmaxerrs 3: Stop compiling after 3 errors to avoid error log explosion
-	compileCtx, compileCancel := context.WithTimeout(ctx, 6*time.Second)
+	// - 8s timeout
+	// - Sandboxed inside Isolate sandbox
+	compileCtx, compileCancel := context.WithTimeout(ctx, 8*time.Second)
 	defer compileCancel()
 
-	compileCmd := exec.CommandContext(compileCtx, "javac",
-		"-J-Xmx64m",
-		"-J-Xms16m",
-		"-Xmaxerrs", "3",
-		"Main.java",
-	)
-	compileCmd.Dir = boxDir
+	compileMetaFile := filepath.Join(boxDir, "compile_meta.txt")
+	compileOpts := RunOptions{
+		BoxID:        boxID,
+		Command:      "/usr/bin/javac",
+		Args:         []string{"-J-Xmx128m", "-J-Xms16m", "-Xmaxerrs", "3", "Main.java"},
+		TimeLimitSec: 8.0,
+		WallLimitSec: 12.0,
+		MemoryKB:     512 * 1024,
+		FileSizeKB:   20 * 1024,
+		MaxProcesses: 50,
+		ExtraDirs:    []string{"/usr/bin", "/usr/lib/jvm"},
+		StderrFile:   "compile_err.txt",
+		MetaFile:     compileMetaFile,
+	}
 
-	compileOut, err := compileCmd.CombinedOutput()
-	if err != nil {
-		return &ExecuteResponse{
-			Status:        "compile_error",
-			CompileOutput: string(compileOut),
-			ExitCode:      1,
-		}, nil
+	compileStats, err := isolate.Run(compileCtx, compileOpts)
+	compileSucceeded := false
+
+	if err == nil && compileStats != nil {
+		if compileStats.ExitCode == 0 {
+			compileSucceeded = true
+		} else {
+			compileErrBytes, _ := os.ReadFile(filepath.Join(boxDir, "compile_err.txt"))
+			return &ExecuteResponse{
+				Status:        "compile_error",
+				CompileOutput: string(compileErrBytes),
+				ExitCode:      1,
+			}, nil
+		}
+	}
+
+	// Fallback to host compilation only if Isolate was not found / disabled on dev machine
+	if !compileSucceeded {
+		compileCmd := exec.CommandContext(compileCtx, "javac",
+			"-J-Xmx64m",
+			"-J-Xms16m",
+			"-Xmaxerrs", "3",
+			"Main.java",
+		)
+		compileCmd.Dir = boxDir
+
+		compileOut, err := compileCmd.CombinedOutput()
+		if err != nil {
+			return &ExecuteResponse{
+				Status:        "compile_error",
+				CompileOutput: string(compileOut),
+				ExitCode:      1,
+			}, nil
+		}
 	}
 	_ = exec.Command("chmod", "-R", "777", boxDir).Run()
 
@@ -82,9 +115,9 @@ func RunJava(ctx context.Context, isolate *IsolateRunner, boxID int, req Execute
 
 	// JVM runtime flags strictly tailored for low-memory CP execution
 	javaArgs := []string{
-		"-Xmx48m",
+		"-Xmx128m",
 		"-Xms16m",
-		"-XX:MaxMetaspaceSize=32m",
+		"-XX:MaxMetaspaceSize=64m",
 		"-Xshare:off",
 		"-XX:ActiveProcessorCount=2",
 		"-XX:CICompilerCount=2",

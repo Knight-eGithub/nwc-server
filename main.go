@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -58,10 +59,22 @@ func main() {
 	}
 }
 
-// withCORS middleware enables direct client-side fallback requests without browser CORS errors
+// withCORS middleware handles CORS headers securely for internal/configured origins
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+		if allowedOrigins != "" && origin != "" {
+			for _, allowed := range strings.Split(allowedOrigins, ",") {
+				if strings.TrimSpace(allowed) == origin {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					break
+				}
+			}
+		} else if os.Getenv("APP_ENV") != "production" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-client-id, x-run-id")
 		if r.Method == http.MethodOptions {
@@ -91,6 +104,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleExecute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Security: Require Bearer token authentication if JUDGE_SECRET_TOKEN is set
+	expectedToken := os.Getenv("JUDGE_SECRET_TOKEN")
+	if expectedToken != "" {
+		authHeader := r.Header.Get("Authorization")
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if token != expectedToken {
+			http.Error(w, `{"error":"unauthorized: valid judge secret token required"}`, http.StatusUnauthorized)
+			return
+		}
+	} else if os.Getenv("APP_ENV") == "production" {
+		http.Error(w, `{"error":"forbidden: JUDGE_SECRET_TOKEN must be configured in production"}`, http.StatusForbidden)
 		return
 	}
 

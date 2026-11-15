@@ -6,23 +6,39 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-// getJavaPaths resolves the real Java binary and JDK home directory (even through symlinks/SDKMAN)
-func getJavaPaths() (string, string) {
+// getJavaPaths resolves the real Java binary, javac binary, and JDK home directory (even through symlinks/SDKMAN)
+func getJavaPaths() (realJava string, realJavac string, jdkHome string) {
 	javaBin, err := exec.LookPath("java")
 	if err != nil {
 		javaBin = "/usr/bin/java"
 	}
-	realBin, err := filepath.EvalSymlinks(javaBin)
+	realJava, err = filepath.EvalSymlinks(javaBin)
 	if err != nil {
-		realBin = javaBin
+		realJava = javaBin
+	}
+
+	javacBin, err := exec.LookPath("javac")
+	if err != nil {
+		javacBin = "/usr/bin/javac"
+	}
+	realJavac, err = filepath.EvalSymlinks(javacBin)
+	if err != nil {
+		realJavac = javacBin
 	}
 
 	// JDK Home is two directories up from .../bin/java
-	jdkHome := filepath.Dir(filepath.Dir(realBin))
-	return realBin, jdkHome
+	jdkHome = filepath.Dir(filepath.Dir(realJava))
+	if _, err := os.Stat(filepath.Join(jdkHome, "bin", "javac")); err != nil {
+		altHome := filepath.Dir(filepath.Dir(realJavac))
+		if _, err := os.Stat(filepath.Join(altHome, "bin", "javac")); err == nil {
+			jdkHome = altHome
+		}
+	}
+	return realJava, realJavac, jdkHome
 }
 
 // RunJava handles the compilation and sandboxed execution of Java code
@@ -53,21 +69,23 @@ func RunJava(ctx context.Context, isolate *IsolateRunner, boxID int, req Execute
 
 	// 4. Compilation Phase with guards:
 	// - 8s timeout
-	// - Sandboxed inside Isolate sandbox
+	// - Sandboxed inside Isolate sandbox with fallback to host compilation
 	compileCtx, compileCancel := context.WithTimeout(ctx, 8*time.Second)
 	defer compileCancel()
+
+	realJavaBin, realJavacBin, jdkHome := getJavaPaths()
 
 	compileMetaFile := filepath.Join(boxDir, "compile_meta.txt")
 	compileOpts := RunOptions{
 		BoxID:        boxID,
-		Command:      "/usr/bin/javac",
+		Command:      realJavacBin,
 		Args:         []string{"-J-Xmx128m", "-J-Xms16m", "-Xmaxerrs", "3", "Main.java"},
 		TimeLimitSec: 8.0,
 		WallLimitSec: 12.0,
-		MemoryKB:     512 * 1024,
+		MemoryKB:     0, // Allow JVM to map address space
 		FileSizeKB:   20 * 1024,
 		MaxProcesses: 50,
-		ExtraDirs:    []string{"/usr/bin", "/usr/lib/jvm"},
+		ExtraDirs:    []string{jdkHome, "/etc", "/usr/bin", "/usr/lib", "/lib", "/lib64"},
 		StderrFile:   "compile_err.txt",
 		MetaFile:     compileMetaFile,
 	}
@@ -80,18 +98,23 @@ func RunJava(ctx context.Context, isolate *IsolateRunner, boxID int, req Execute
 			compileSucceeded = true
 		} else {
 			compileErrBytes, _ := os.ReadFile(filepath.Join(boxDir, "compile_err.txt"))
-			return &ExecuteResponse{
-				Status:        "compile_error",
-				CompileOutput: string(compileErrBytes),
-				ExitCode:      1,
-			}, nil
+			errStr := string(compileErrBytes)
+			// If isolate itself failed to run javac (e.g. execve failure, missing symlink target, internal error)
+			// do NOT treat it as student compilation error; fall through to host compilation
+			if !strings.Contains(errStr, "execve") && compileStats.Status != "XX" {
+				return &ExecuteResponse{
+					Status:        "compile_error",
+					CompileOutput: errStr,
+					ExitCode:      1,
+				}, nil
+			}
 		}
 	}
 
-	// Fallback to host compilation only if Isolate was not found / disabled on dev machine
+	// Fallback to host compilation if Isolate was not found / disabled / failed to launch compiler
 	if !compileSucceeded {
-		compileCmd := exec.CommandContext(compileCtx, "javac",
-			"-J-Xmx64m",
+		compileCmd := exec.CommandContext(compileCtx, realJavacBin,
+			"-J-Xmx128m",
 			"-J-Xms16m",
 			"-Xmaxerrs", "3",
 			"Main.java",
@@ -110,7 +133,6 @@ func RunJava(ctx context.Context, isolate *IsolateRunner, boxID int, req Execute
 	_ = exec.Command("chmod", "-R", "777", boxDir).Run()
 
 	// 5. Detect real Java binary and JDK installation directory
-	realJavaBin, jdkHome := getJavaPaths()
 	metaFile := fmt.Sprintf("/tmp/isolate_meta_%d.txt", boxID)
 
 	// JVM runtime flags strictly tailored for low-memory CP execution

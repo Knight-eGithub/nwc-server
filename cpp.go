@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -58,7 +59,7 @@ func RunCpp(ctx context.Context, isolate *IsolateRunner, boxID int, req ExecuteR
 		MemoryKB:     512 * 1024,
 		FileSizeKB:   20 * 1024,
 		MaxProcesses: 50,
-		ExtraDirs:    []string{"/usr/bin", "/usr/include", "/usr/lib", "/usr/lib/gcc"},
+		ExtraDirs:    []string{"/usr/bin", "/usr/include", "/usr/lib", "/usr/lib/gcc", "/usr/libexec", "/usr/x86_64-linux-gnu", "/etc"},
 		StderrFile:   "compile_err.txt",
 		MetaFile:     compileMetaFile,
 	}
@@ -73,11 +74,16 @@ func RunCpp(ctx context.Context, isolate *IsolateRunner, boxID int, req ExecuteR
 		} else {
 			compileErrBytes, _ := os.ReadFile(filepath.Join(boxDir, "compile_err.txt"))
 			compileErrOutput = string(compileErrBytes)
-			return &ExecuteResponse{
-				Status:        "compile_error",
-				CompileOutput: compileErrOutput,
-				ExitCode:      1,
-			}, nil
+			// If isolate failed due to missing system tools (ld, execve, internal box error), fall through to host compilation
+			if !strings.Contains(compileErrOutput, "cannot find 'ld'") &&
+				!strings.Contains(compileErrOutput, "execve") &&
+				compileStats.Status != "XX" {
+				return &ExecuteResponse{
+					Status:        "compile_error",
+					CompileOutput: compileErrOutput,
+					ExitCode:      1,
+				}, nil
+			}
 		}
 	}
 
